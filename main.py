@@ -10,12 +10,14 @@ import scipy.spatial as spsp
 
 def target_fun(x):
     x = sp.asarray(x)
-    return - 0.15 * x**6 * sp.exp(-sp.absolute(x)) + 0.5*x**2
+    return sp.cos(x**2)
+    #return - 0.15 * x**6 * sp.exp(-sp.absolute(x)) + 0.5*x**2
     
 
 def dtarget_fun(x):
     x = sp.asarray(x)
-    return 0.15 * sp.sign(x) * sp.exp(-sp.absolute(x)) * x**6 - 0.15 * 6 * x**5 * sp.exp(-sp.absolute(x)) + x
+    return - sp.sin(x**2) * 2 * x
+    #return 0.15 * sp.sign(x) * sp.exp(-sp.absolute(x)) * x**6 - 0.15 * 6 * x**5 * sp.exp(-sp.absolute(x)) + x
 
  
 def select_next_x(sort_order, x_list, old_x):
@@ -90,16 +92,17 @@ xmin, xmax = -6., 6.
 theta = 1.0e-1
 nugget = 1.0e-8
 method = 'local_high_variance'# 'highest_variance_grid', 'local_high_variance'
-convergence_threshold = 1.0e-2
+convergence_threshold = 5.0e-2
 
 
 # Setup Gaussian Process
 # gp = GaussianProcess(corr='linear', theta0=1e-1, thetaL=1e-4, thetaU=1e+0, normalize=True, nugget=nugget)
-gp = GaussianProcess(corr='squared_exponential', theta0=theta, thetaL=1e-2, thetaU=1e+0, nugget = nugget, normalize=False)
+gp = GaussianProcess(corr='squared_exponential', theta0=theta, thetaL=1e-4, thetaU=1e+0, nugget = nugget, normalize=False)
 
 # first 2 evaluation points drawn at random from range
 x = sp.array([random.uniform(xmin,xmax) for i in range(4)])
 y = target_fun(x).ravel()
+yprime = dtarget_fun(x).ravel()
 
 # teach the first 2 trial points
 gp.fit(atleast_2d(x).T,y)
@@ -182,9 +185,11 @@ elif method == 'local_high_variance':
     pick new x from neighbourhood of previous ones as the one with largest MSE
     evaluate energy landscape via GP for next value of x  
     """
-    n_test_pts = 8
-    reach = 1/3 
-    x_test = sp.array([sp.linspace(point - reach, point + reach, n_test_pts) for point in x]).flatten()
+    n_test_pts = 50
+    reach = 1.
+    reaches = sp.exp(- sp.absolute(yprime) / reach)  
+    x_test = sp.unique(sp.array([sp.linspace(point - r, point + r, n_test_pts) for point, r in zip(x, reaches)]).flatten())
+    x_test = [point for point in x_test if (point >= xmin and point <= xmax)]
     x_test = sp.sort(x_test)
     
     y_pred, MSE = gp.predict(atleast_2d(x_test).T, eval_MSE=True)
@@ -198,18 +203,23 @@ elif method == 'local_high_variance':
         # do new calculation on the point with largest predicted variance
         x = sp.hstack((x, xnew))
         y = target_fun(x).ravel() # wasteful, I'm recalculating all y. But who cares for now
+        yprime = dtarget_fun(x).ravel() # wasteful, I'm recalculating all y. But who cares for now
 
         gp.fit(atleast_2d(x).T,y)
 
-        x_test = sp.array([sp.linspace(point - reach, point + reach, n_test_pts) for point in x]).flatten()
+        reaches = sp.exp(- sp.absolute(yprime) / reach)  
+        x_test = sp.unique(sp.array([sp.linspace(point - reach, point + reach, n_test_pts) for point in x]).flatten())
+        x_test = [point for point in x_test if (point >= xmin and point <= xmax)]
         x_test = sp.sort(x_test)
 
         xnew, y_pred, MSE, max_pred_err = highest_MSE_x(gp, x_test, x, [xmin, xmax])
         
         lines = draw_plot(fig, x, y, x_test, y_pred, MSE)
+        print("mean force: %.03f" % sp.absolute(yprime).mean())
+
         print("Step %03d | MAX ERROR: %.03f" % (step, max_pred_err))
         # pl.savefig('ajvar-%03d.png' % step)
-        time.sleep(.3)
+        # time.sleep(3)
         step += 1
 
 
